@@ -1,0 +1,22 @@
+groups:
+  - name: microservicios
+    interval: 30s
+    rules:
+      - alert: MicroservicioDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Microservicio no responde"
+          description: "{{ $labels.job }} ({{ $labels.instance }}) está DOWN desde hace más de 1 minuto."
+
+      # Métrica del microservicio inventario (sum = total req/s del servicio)
+      - alert: AltoNumeroPeticiones
+        expr: sum(rate(inventory_http_requests_total[5m])) > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alto número de peticiones por segundo"
+          description: "{{ $labels.job }} tiene más de 100 req/s (valor: {{ $value }})."
