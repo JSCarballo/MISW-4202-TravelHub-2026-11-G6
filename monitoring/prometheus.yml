@@ -18,3 +18,9 @@ scrape_configs:
     metrics_path: '/metrics'
     static_configs:
       - targets: ['api-orders:8000']
+
+  # microservicio inventario
+  - job_name: 'api-inventory'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['api-inventory:8000']

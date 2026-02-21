@@ -14,17 +14,25 @@ services:
       - '--web.enable-lifecycle'
     networks:
       - monitoring
+
   api-users:
     build: ./api-reservations
     ports:
-      -"8080:8080"
+      - "8080:8080"
     networks:
       - monitoring
-  
+
   api-orders:
     build: ./api_payments
     ports:
-      -"8001:8001"
+      - "8001:8001"
+    networks:
+      - monitoring
+
+  api-inventory:
+    build: ./microservicio_inventario
+    ports:
+      - "8002:8000"
     networks:
       - monitoring
 
