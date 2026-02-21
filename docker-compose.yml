@@ -10,34 +10,74 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./monitoring/prometheus-rule.yml:/etc/prometheus/rules.yml
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
     networks:
       - monitoring
 
-  # Descomenta cuando exista la carpeta api-reservations
-  # api-users:
-  #   build: ./api-reservations
-  #   ports:
-  #     - "8080:8080"
-  #   networks:
-  #     - monitoring
-
-  # Descomenta cuando exista la carpeta api_payments
-  # api-orders:
-  #   build: ./api_payments
-  #   ports:
-  #     - "8001:8001"
-  #   networks:
-  #     - monitoring
-
-  api-inventory:
+  # Instancia 1 del microservicio
+  api-inventory-1:
     build: ./microservicio_inventario
-    ports:
-      - "8002:8000"
+    container_name: api-inventory-1
     networks:
       - monitoring
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8000/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Instancia 2 del microservicio
+  api-inventory-2:
+    build: ./microservicio_inventario
+    container_name: api-inventory-2
+    networks:
+      - monitoring
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8000/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Instancia 3 del microservicio
+  api-inventory-3:
+    build: ./microservicio_inventario
+    container_name: api-inventory-3
+    networks:
+      - monitoring
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8000/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   monitoring:
