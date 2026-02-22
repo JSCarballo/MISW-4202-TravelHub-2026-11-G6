@@ -8,16 +8,23 @@
 #   4. El servicio continúa operando con las otras réplicas
 #      con baja tasa de error
 #
+# ══════════════════════════════════════════════════════════════════
 # Prerequisitos:
 #   - docker compose up -d --build  (ya corriendo)
 #   - pip3 install requests  (para monitor.py)
 #   - Prometheus scrapea las 3 instancias (verificar en :9090/targets)
+#
+# Compatibilidad:
+#   - Windows: requiere WSL o Git Bash + Docker Desktop
 #
 # Uso:
 #   chmod +x monitoring/demo.sh
 #   ./monitoring/demo.sh
 # ══════════════════════════════════════════════════════════════════
 set -euo pipefail
+timestamp() {
+    python3 -c "import time; print(f'{time.time():.6f}')"
+}
 
 GATEWAY="http://localhost:8080"
 PROM="http://localhost:9090"
@@ -107,7 +114,7 @@ header "FASE 1: Línea base — tasa de error con todo healthy"
 
 echo "  Enviando $TOTAL_REQUESTS requests al gateway ..."
 read -r errors_before success_before total_before <<< "$(measure_error_rate $TOTAL_REQUESTS)"
-rate_before=$(echo "scale=1; $errors_before * 100 / $total_before" | bc)
+rate_before=$(python3 -c "print(f'{$errors_before * 100 / $total_before:.1f}')")
 ok "Baseline: $success_before/$total_before exitosos, $errors_before errores ($rate_before%)"
 
 # ══════════════════════════════════════════════════════════════════
@@ -128,7 +135,7 @@ sleep 2
 
 echo -e "  ${YELLOW}🎲 Instancia seleccionada al azar: ${TARGET_NAME} (puerto ${TARGET_PORT})${NC}"
 echo "  Marcando ${TARGET_NAME} como 'degraded' ..."
-DEGRADE_TIME=$(date +%s.%N)
+DEGRADE_TIME=$(timestamp)
 curl -s -X POST -H "Content-Type: application/json" \
      -d '{"state":"degraded"}' "$TARGET_URL/admin/state" > /dev/null
 ok "${TARGET_NAME} marcada como degraded (t=$DEGRADE_TIME)"
@@ -142,7 +149,7 @@ echo "  Esperando detección (máx 20s) ..."
 DETECTED=false
 for i in $(seq 1 20); do
     if grep -q "removed-by-monitor" monitoring/nginx/upstream.conf 2>/dev/null; then
-        DETECT_TIME=$(date +%s.%N)
+        DETECT_TIME=$(timestamp)
         DETECTED=true
         break
     fi
@@ -150,10 +157,10 @@ for i in $(seq 1 20); do
 done
 
 if $DETECTED; then
-    ELAPSED=$(echo "$DETECT_TIME - $DEGRADE_TIME" | bc)
+    ELAPSED=$(python3 -c "print(f'{$DETECT_TIME - $DEGRADE_TIME:.1f}')")
     ok "RESULTADO 1: Degradación detectada ✔"
     ok "RESULTADO 2: Tiempo de detección y retiro = ${ELAPSED}s"
-    if (( $(echo "$ELAPSED <= 15" | bc -l) )); then
+    if python3 -c "exit(0 if $DETECT_TIME - $DEGRADE_TIME <= 15 else 1)"; then
         ok "  Dentro del umbral ≤10s (tolerancia de red/scrape incluida)"
     else
         warn "  Tardó más de lo esperado; ajustar poll-interval o consecutive"
@@ -192,10 +199,10 @@ sleep 2
 # Verificar que la instancia degradada ya no recibe tráfico
 echo "  Enviando $TOTAL_REQUESTS requests al gateway (sin ${TARGET_NAME}) ..."
 read -r errors_after success_after total_after <<< "$(measure_error_rate $TOTAL_REQUESTS)"
-rate_after=$(echo "scale=1; $errors_after * 100 / $total_after" | bc)
+rate_after=$(python3 -c "print(f'{$errors_after * 100 / $total_after:.1f}')")
 ok "Post-retiro: $success_after/$total_after exitosos, $errors_after errores ($rate_after%)"
 
-if (( $(echo "$rate_after < 5" | bc -l) )); then
+if python3 -c "exit(0 if $rate_after < 5 else 1)"; then
     ok "RESULTADO 4: Tasa de error < 5% — servicio operando correctamente ✔"
 else
     warn "Tasa de error = $rate_after% — verificar estado de instancias 2 y 3"
@@ -220,7 +227,7 @@ echo -e "  ├──────┼───────────────
 echo -e "  │  R1  │ Detectar degradación del microservicio     │ ${GREEN}✔ PASS${NC}   │"
 
 # Resultado 2
-if (( $(echo "$ELAPSED <= 10" | bc -l) )); then
+if python3 -c "exit(0 if float('$ELAPSED') <= 10 else 1)"; then
     R2_STATUS="${GREEN}✔ PASS${NC}"
 else
     R2_STATUS="${YELLOW}⚠ WARN${NC}"
@@ -231,7 +238,7 @@ echo -e "  │  R2  │ Detección en ≤10s (real: ${ELAPSED}s)  │ ${R2_STATU
 echo -e "  │  R3  │ Retiro automático de la instancia          │ ${GREEN}✔ PASS${NC}   │"
 
 # Resultado 4
-if (( $(echo "$rate_after < 5" | bc -l) )); then
+if python3 -c "exit(0 if float('$rate_after') < 5 else 1)"; then
     R4_STATUS="${GREEN}✔ PASS${NC}"
 else
     R4_STATUS="${RED}✘ FAIL${NC}"
