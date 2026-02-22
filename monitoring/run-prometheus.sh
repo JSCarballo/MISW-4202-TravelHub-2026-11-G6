@@ -7,6 +7,7 @@ docker run -d \
   --name prometheus \
   -p 9090:9090 \
   -v "$CONFIG_FILE:/etc/prometheus/prometheus.yml:ro" \
+  -v "$SCRIPT_DIR/prometheus-rule.yml:/etc/prometheus/rules.yml:ro" \
   prom/prometheus:latest \
   --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/prometheus

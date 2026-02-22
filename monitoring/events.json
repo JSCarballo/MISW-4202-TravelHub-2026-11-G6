@@ -1,0 +1,16 @@
+[
+  {
+    "ts": "2026-02-22T02:18:08.749929+00:00",
+    "epoch": 1771726688.7499504,
+    "event": "DEGRADATION_CONFIRMED",
+    "instance": "api-inventory-1:8000",
+    "detail": "value=1.0 count=2"
+  },
+  {
+    "ts": "2026-02-22T02:18:09.376172+00:00",
+    "epoch": 1771726689.3761888,
+    "event": "REMOVED_FROM_UPSTREAM",
+    "instance": "api-inventory-1:8000",
+    "detail": ""
+  }
+]

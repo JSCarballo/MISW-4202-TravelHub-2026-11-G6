@@ -20,17 +20,17 @@ services:
   api-inventory-1:
     build: ./microservicio_inventario
     container_name: api-inventory-1
+    ports:
+      - "8001:8000"
     networks:
       - monitoring
     healthcheck:
       test:
         [
           "CMD",
-          "wget",
-          "--quiet",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8000/health",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
         ]
       interval: 10s
       timeout: 5s
@@ -41,17 +41,17 @@ services:
   api-inventory-2:
     build: ./microservicio_inventario
     container_name: api-inventory-2
+    ports:
+      - "8002:8000"
     networks:
       - monitoring
     healthcheck:
       test:
         [
           "CMD",
-          "wget",
-          "--quiet",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8000/health",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
         ]
       interval: 10s
       timeout: 5s
@@ -62,22 +62,36 @@ services:
   api-inventory-3:
     build: ./microservicio_inventario
     container_name: api-inventory-3
+    ports:
+      - "8003:8000"
     networks:
       - monitoring
     healthcheck:
       test:
         [
           "CMD",
-          "wget",
-          "--quiet",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8000/health",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
         ]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  nginx:
+    image: nginx:stable
+    container_name: nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./monitoring/nginx:/etc/nginx/conf.d
+    networks:
+      - monitoring
+    depends_on:
+      - api-inventory-1
+      - api-inventory-2
+      - api-inventory-3
 
 networks:
   monitoring:
