@@ -1,0 +1,244 @@
+================================================================================
+  EXPERIMENTO: Detección de modificaciones no autorizadas en DB Reservas
+               + bloqueo y reversión
+================================================================================
+
+Requisitos previos:
+  - Docker Desktop (Windows/Mac) o Docker Engine + Docker Compose (Linux)
+  - Git
+  - psql (cliente de PostgreSQL)
+  - curl
+
+================================================================================
+  CONTEXTO: MODELO DE DETECCION
+================================================================================
+
+  Este experimento opera a nivel de BASE DE DATOS, no a nivel de API HTTP.
+
+  El Auditor detecta fraude analizando PATRONES ANOMALOS en audit.audit_log:
+
+    Patrón 1 - Ráfaga de operaciones al mismo registro:
+      Si un mismo registro recibe 3+ UPDATEs en 30 segundos, es sospechoso.
+      Ejemplo: booking.id=1 recibe 5 UPDATEs seguidos.
+
+    Patrón 2 - Cambio anómalo de precio:
+      Si el precio de una reserva se reduce más del 50% en una operación.
+      Ejemplo: total_price pasa de $350,000 a $3,500 (reducción del 99%).
+
+    Patrón 3 - Volumen alto de operaciones por usuario:
+      Si un usuario ejecuta 5+ operaciones totales en 30 segundos, sin importar
+      cuántas filas distintas toca. Detecta ataques distribuidos en varias filas.
+      Ejemplo: un usuario hace 1 UPDATE a cada una de 5 reservas distintas.
+
+  El Auditor NO busca un username específico. Analiza el comportamiento
+  en audit_log y detecta anomalías sin importar quién las ejecute.
+
+  Canal autorizado (microservicio):
+    Cliente HTTP ──► api-reservas (Flask) ──► PostgreSQL como 'bookinguser'
+                     (sin auth HTTP)          Operaciones normales, sin anomalías
+
+  Canal no autorizado (ataque directo):
+    Atacante ──► psql directo ──► PostgreSQL como cualquier usuario
+                 (saltando la API)  Manipula precios → genera patrones anómalos
+
+  El microservicio de Reservas NO tiene autenticación HTTP. Lo que importa
+  es que sus operaciones son normales (1 UPDATE por request, cambios de
+  estado legítimos) y no disparan los umbrales de detección.
+
+  Usuarios de base de datos:
+    - admin        : Superusuario de PostgreSQL (dueño de la BD)
+    - bookinguser  : Usuario del microservicio de Reservas (SELECT/INSERT/UPDATE/DELETE)
+    - frauduser    : Simula un atacante con credenciales limitadas (SELECT/UPDATE)
+
+================================================================================
+  1. CLONAR EL REPOSITORIO
+================================================================================
+
+  git clone https://github.com/MISW-4202-TravelHub-2026-11-G6.git
+  cd MISW-4202-TravelHub-2026-11-G6
+  git checkout audit
+
+================================================================================
+  2. LEVANTAR LA INFRAESTRUCTURA
+================================================================================
+
+  Borrar datos previos y levantar todos los servicios:
+
+  docker compose down -v
+  docker compose up -d --build
+
+  Esperar ~30 segundos a que todos los servicios estén healthy.
+  Verificar con:
+
+  docker compose ps
+
+  Servicios esperados (10):
+    - postgres           (healthy)    Puerto 5434
+    - postgres-exporter              Puerto 9187
+    - prometheus                     Puerto 9090
+    - api-reservas       (healthy)    Puerto 5000
+    - auditor                        (corriendo)
+    - api-inventory-1    (healthy)    Puerto 8001
+    - api-inventory-2    (healthy)    Puerto 8002
+    - api-inventory-3    (healthy)    Puerto 8003
+    - nginx                          Puerto 8888
+    - pgadmin                        Puerto 5050
+
+================================================================================
+  3. EJECUTAR EL EXPERIMENTO
+================================================================================
+
+--- LINUX / MAC ---
+
+  bash postgres/run_audit_experiment.sh
+
+--- WINDOWS (PowerShell) ---
+
+  Si tiene Git Bash instalado:
+    & "C:\Program Files\Git\bin\bash.exe" postgres/run_audit_experiment.sh
+
+  Si tiene WSL instalado:
+    wsl bash postgres/run_audit_experiment.sh
+
+--- WINDOWS (CMD) ---
+
+  "C:\Program Files\Git\bin\bash.exe" postgres/run_audit_experiment.sh
+
+================================================================================
+  4. EJECUCION MANUAL (si no se puede correr el script)
+================================================================================
+
+  Si no puede ejecutar el script .sh, siga estos pasos manualmente:
+
+  4a. Verificar servicios:
+
+    curl http://localhost:5000/health
+    curl http://localhost:9090/-/healthy
+    curl http://localhost:9187/metrics
+
+  4b. Crear una reserva via microservicio (canal autorizado):
+
+    La API no tiene autenticación HTTP. Cualquiera puede llamarla.
+    Lo relevante es que internamente se conecta a PostgreSQL como
+    'bookinguser', y el Auditor reconoce ese usuario como legítimo.
+
+    curl -X POST http://localhost:5000/bookings ^
+      -H "Content-Type: application/json" ^
+      -d "{\"user_id\": 99, \"sku\": \"HTL-099\", \"item_name\": \"Hotel Test\", \"total_price\": 100000}"
+
+    Resultado esperado: HTTP 201, reserva creada.
+    En audit_log aparecerá changed_by = 'bookinguser' (NO genera alerta).
+
+  4c. Verificar evidencia en audit_log:
+
+    Linux/Mac:
+      PGPASSWORD=adminTravelHub psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT * FROM audit.audit_log;"
+
+    Windows (PowerShell):
+      $env:PGPASSWORD="adminTravelHub"; psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT * FROM audit.audit_log;"
+
+    Resultado esperado: registros con changed_by = 'bookinguser'.
+
+  4d. Simular ataque distribuido con frauduser (1 UPDATE por reserva):
+
+    Aquí se simula un atacante que obtuvo credenciales de la BD y se
+    conecta DIRECTAMENTE a PostgreSQL (sin pasar por la API). El ataque
+    es distribuido: modifica CADA reserva una sola vez, reduciendo el
+    precio al 1%. El Auditor lo detecta por patrones anómalos (volumen
+    alto de operaciones + cambio anómalo de precio), no por fila.
+
+    Linux/Mac:
+      for i in 1 2 3 4 5; do
+        PGPASSWORD=fraude_pass_456 psql -h localhost -p 5434 -U frauduser -d booking_db \
+          -c "UPDATE booking SET total_price = total_price * 0.01 WHERE id = $i;"
+      done
+
+    Windows (PowerShell):
+      1..5 | ForEach-Object {
+        $env:PGPASSWORD="fraude_pass_456"; psql -h localhost -p 5434 -U frauduser -d booking_db -c "UPDATE booking SET total_price = total_price * 0.01 WHERE id = $_;"
+      }
+
+  4e. Esperar 5-10 segundos y revisar logs del auditor:
+
+    docker logs auditor
+
+    Resultado esperado (en menos de 10 segundos):
+      [FRAUD_DETECTED] Usuario no autorizado detectado: 'frauduser'
+      [CHANGES_REVERTED] 1 cambios de 'frauduser' revertidos
+      [USER_BLOCKED] Usuario 'frauduser' bloqueado
+
+  4f. Verificar que frauduser fue bloqueado:
+
+    Linux/Mac:
+      PGPASSWORD=fraude_pass_456 psql -h localhost -p 5434 -U frauduser -d booking_db -c "SELECT 1;"
+
+    Windows (PowerShell):
+      $env:PGPASSWORD="fraude_pass_456"; psql -h localhost -p 5434 -U frauduser -d booking_db -c "SELECT 1;"
+
+    Resultado esperado: FATAL: permission denied / role "frauduser" is not permitted to log in
+
+  4g. Verificar que el precio fue revertido:
+
+    Linux/Mac:
+      PGPASSWORD=adminTravelHub psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT total_price FROM booking WHERE id = 1;"
+
+    Windows (PowerShell):
+      $env:PGPASSWORD="adminTravelHub"; psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT total_price FROM booking WHERE id = 1;"
+
+    Resultado esperado: 350000.00 (valor original restaurado)
+
+================================================================================
+  5. RESULTADOS ESPERADOS
+================================================================================
+
+  RE1. Deteccion + alerta en <= 10 segundos
+       El componente Auditor detecta las operaciones de frauduser y genera
+       el evento FRAUD_DETECTED en menos de 10 segundos.
+
+  RE2. Evidencia en el componente Auditor (log de auditoria)
+       La tabla audit.audit_log contiene registros con old_data y new_data
+       en formato JSONB, changed_by con el usuario real, y timestamps.
+
+  RE3. Bloqueo del usuario en <= 30 segundos
+       El Auditor ejecuta REVOKE CONNECT y ALL PRIVILEGES sobre frauduser
+       en menos de 30 segundos desde la deteccion.
+
+  RE4. Canal autorizado no dispara bloqueo ni alerta
+       Las operaciones realizadas via el microservicio de Reservas
+       (que usa bookinguser) no generan bloqueo ni alerta. La API
+       no tiene autenticación HTTP; la autorización se valida a
+       nivel de base de datos por el usuario de conexión PostgreSQL.
+
+================================================================================
+  6. INTERFACES WEB PARA VERIFICACION
+================================================================================
+
+  Prometheus:  http://localhost:9090
+    - Status > Targets: verificar que postgres-audit esta UP
+    - Alerts: ver alertas de auditoria (AuditFraudUserDetected, etc.)
+    - Graph: consultar metricas como:
+        audit_fraud_user_operations_total
+        audit_total_events_total
+        audit_updates_last_5m_total
+
+  PgAdmin:     http://localhost:5050
+    - Email: admin@admin.com
+    - Password: admin123
+    - Agregar servidor: host=postgres, port=5432, user=admin, pass=adminTravelHub
+
+  API Reservas: http://localhost:5000
+    - GET  /health          Estado del servicio
+    - GET  /bookings        Listar reservas
+    - POST /bookings        Crear reserva
+    - PUT  /bookings/:id    Actualizar reserva
+    - DELETE /bookings/:id  Eliminar reserva
+
+================================================================================
+  7. LIMPIAR
+================================================================================
+
+  Para detener y eliminar todo:
+
+  docker compose down -v
+
+================================================================================

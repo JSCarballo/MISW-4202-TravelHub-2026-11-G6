@@ -7,7 +7,7 @@ CREATE TABLE audit.audit_log(
     operations CHAR(1) NOT NULL CHECK (operations IN ('I','U','D')),
     old_data JSONB,
     new_data JSONB,
-    changed_by VARCHAR(63) NOT NULL DEFAULT current_user,
+    changed_by VARCHAR(63) NOT NULL DEFAULT session_user,
     changed_at TIMESTAMP NOT NULL DEFAULT clock_timestamp()
 );
 
@@ -54,7 +54,7 @@ BEGIN
         op,
         old_row,
         new_row,
-        current_user,
+        session_user,
         clock_timestamp()
     );
     IF TG_OP = 'DELETE' THEN

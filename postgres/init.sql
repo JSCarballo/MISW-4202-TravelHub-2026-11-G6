@@ -30,10 +30,12 @@ CREATE USER bookinguser WITH PASSWORD 'reservas_pass_123';
 GRANT CONNECT ON DATABASE booking_db TO bookinguser;
 GRANT USAGE ON SCHEMA public TO bookinguser;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO bookinguser;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bookinguser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bookinguser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO bookinguser;
 
--- Usuario fraudulento (acceso solo actualización para simulación de fraude)
+-- Usuario fraudulento (SELECT + UPDATE para simulación de fraude)
 CREATE USER frauduser WITH PASSWORD 'fraude_pass_456';
 GRANT CONNECT ON DATABASE booking_db TO frauduser;
 GRANT USAGE ON SCHEMA public TO frauduser;
-GRANT UPDATE ON ALL TABLES IN SCHEMA public TO frauduser;
+GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO frauduser;

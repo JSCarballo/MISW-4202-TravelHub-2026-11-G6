@@ -17,5 +17,12 @@ scrape_configs:
         labels:
           service: 'inventory'
 
+  # postgres exporter - métricas de auditoría
+  - job_name: 'postgres-audit'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'audit'
+
 rule_files:
   - /etc/prometheus/rules.yml

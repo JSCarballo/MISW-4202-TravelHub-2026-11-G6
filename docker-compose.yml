@@ -105,8 +105,8 @@ services:
       - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./postgres/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./postgres/migrations/audit_schema.sql:/docker-entrypoint-initdb.d/02_audit_schema.sql
     networks:
       - monitoring
     healthcheck:
@@ -114,6 +114,70 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://admin:adminTravelHub@postgres:5432/booking_db?sslmode=disable"
+    volumes:
+      - ./postgres/audit_queries.yml:/etc/postgres_exporter/queries.yml:ro
+    command:
+      - "--extend.query-path=/etc/postgres_exporter/queries.yml"
+      - "--disable-default-metrics"
+      - "--disable-settings-metrics"
+    ports:
+      - "9187:9187"
+    networks:
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Microservicio de Reservas (canal autorizado)
+  api-reservas:
+    build: ./microservicio_reservas
+    container_name: api-reservas
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: booking_db
+      DB_USER: bookinguser
+      DB_PASSWORD: reservas_pass_123
+    ports:
+      - "5000:5000"
+    networks:
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Componente Auditor - Security Monitor
+  auditor:
+    build: ./auditor
+    container_name: auditor
+    restart: unless-stopped
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      POLL_INTERVAL: "5"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: booking_db
+      DB_USER: admin
+      DB_PASSWORD: adminTravelHub
+    networks:
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   pgadmin:
     image: dpage/pgadmin4:latest
