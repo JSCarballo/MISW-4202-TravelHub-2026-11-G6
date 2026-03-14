@@ -83,7 +83,7 @@ services:
     image: nginx:stable
     container_name: nginx
     ports:
-      - "8080:80"
+      - "8888:80"
     volumes:
       - ./monitoring/nginx:/etc/nginx/conf.d
     networks:
@@ -102,10 +102,11 @@ services:
       POSTGRES_PASSWORD: adminTravelHub
       POSTGRES_DB: booking_db
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/migrations:/docker-entrypoint-initdb.d/migrations
     networks:
       - monitoring
     healthcheck:
