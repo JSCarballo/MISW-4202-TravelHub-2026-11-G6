@@ -79,36 +79,6 @@ services:
       retries: 3
       start_period: 10s
 
-  api-reservas:
-    build: ./microservicio_reservas
-    container_name: api-reservas
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: booking_db
-      DB_USER: bookinguser
-      DB_PASSWORD: reservas_pass_123
-      DB_APPLICATION_NAME: reservas-ms
-    ports:
-      - "8004:8000"
-    networks:
-      - monitoring
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
   nginx:
     image: nginx:stable
     container_name: nginx
