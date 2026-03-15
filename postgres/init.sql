@@ -26,7 +26,14 @@ INSERT INTO booking (user_id, sku, item_name, quantity, status, total_price) VAL
     (1, 'FLT-002', 'Vuelo Bogota-Medellin',  1, 'confirmed',   90000.00);
 
 -- Usuario para el microservicio de reservas (acceso legítimo)
-CREATE USER bookinguser WITH PASSWORD 'reservas_pass_123';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'bookinguser') THEN
+        CREATE USER bookinguser WITH PASSWORD 'reservas_pass_123';
+    END IF;
+END
+$$;
+
 GRANT CONNECT ON DATABASE booking_db TO bookinguser;
 GRANT USAGE ON SCHEMA public TO bookinguser;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO bookinguser;
