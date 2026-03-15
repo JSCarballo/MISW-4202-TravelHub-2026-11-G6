@@ -29,3 +29,46 @@ groups:
         annotations:
           summary: "Instancia de inventory degradada"
           description: "Al menos una instancia de inventory tiene inventory_service_state > 0 por más de 30s."
+
+  - name: audit_seguridad
+    interval: 5s
+    rules:
+      # Alerta: usuario fraudulento realizó operaciones en los últimos 5 minutos
+      - alert: AuditFraudUserDetected
+        expr: audit_fraud_user_operations_total > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Operaciones de usuario fraudulento detectadas"
+          description: "El usuario 'frauduser' ha realizado {{ $value }} operaciones en los últimos 5 minutos."
+
+      # Alerta: volumen alto de UPDATEs (posible manipulación masiva)
+      - alert: AuditHighUpdateVolume
+        expr: audit_updates_last_5m_total > 10
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alto volumen de UPDATEs en booking"
+          description: "Se detectaron {{ $value }} operaciones UPDATE en los últimos 5 minutos, posible manipulación masiva."
+
+      # Alerta: ráfaga de eventos de auditoría por un mismo usuario
+      - alert: AuditUserBurst
+        expr: audit_operations_last_5m_total > 20
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ráfaga de operaciones por un usuario"
+          description: "El usuario '{{ $labels.changed_by }}' generó {{ $value }} eventos de auditoría en 5 minutos."
+
+      # Alerta: el exporter de postgres no responde
+      - alert: PostgresExporterDown
+        expr: up{job="postgres-audit"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Postgres exporter no responde"
+          description: "El postgres_exporter para audit no está disponible desde hace más de 1 minuto."

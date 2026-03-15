@@ -36,22 +36,13 @@ $$;
 
 GRANT CONNECT ON DATABASE booking_db TO bookinguser;
 GRANT USAGE ON SCHEMA public TO bookinguser;
-REVOKE ALL PRIVILEGES ON TABLE booking FROM bookinguser;
-GRANT SELECT, INSERT, UPDATE ON TABLE booking TO bookinguser;
-REVOKE ALL PRIVILEGES ON SEQUENCE booking_id_seq FROM bookinguser;
-GRANT USAGE, SELECT ON SEQUENCE booking_id_seq TO bookinguser;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO bookinguser;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bookinguser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bookinguser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO bookinguser;
 
--- Usuario fraudulento (acceso solo actualización para simulación de fraude)
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'frauduser') THEN
-        CREATE USER frauduser WITH PASSWORD 'fraude_pass_456';
-    END IF;
-END
-$$;
-
+-- Usuario fraudulento (SELECT + UPDATE para simulación de fraude)
+CREATE USER frauduser WITH PASSWORD 'fraude_pass_456';
 GRANT CONNECT ON DATABASE booking_db TO frauduser;
 GRANT USAGE ON SCHEMA public TO frauduser;
-REVOKE ALL PRIVILEGES ON TABLE booking FROM frauduser;
-GRANT UPDATE ON TABLE booking TO frauduser;
-GRANT SELECT (id) ON TABLE booking TO frauduser;
+GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO frauduser;

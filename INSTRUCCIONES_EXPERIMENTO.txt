@@ -1,0 +1,183 @@
+================================================================================
+  EXPERIMENTO: Detección de modificaciones no autorizadas en DB Reservas
+================================================================================
+
+Requisitos:
+  - Docker Desktop (Windows/Mac) o Docker Engine + Docker Compose (Linux)
+  - Git
+  - psql (cliente de PostgreSQL)
+  - curl
+
+================================================================================
+  MODELO DE DETECCION
+================================================================================
+
+  El experimento opera a nivel de base de datos.
+
+  El Auditor detecta fraude por patrones anómalos en audit.audit_log:
+
+    Patrón 1 - Ráfaga: 3+ UPDATEs al mismo registro en 30 segundos.
+
+    Patrón 2 - Precio anómalo: Reducción de precio mayor al 50% en una operación.
+
+    Patrón 3 - Volumen: 5+ operaciones por usuario en 30 segundos,
+               sin importar cuántas filas distintas toca.
+
+  Canal autorizado:
+    Cliente HTTP → api-reservas (Flask) → PostgreSQL como 'bookinguser'
+
+  Canal no autorizado:
+    Atacante → psql directo → PostgreSQL (saltando la API)
+
+  Usuarios de BD:
+    - admin        : dueño de la BD
+    - bookinguser  : usado por el microservicio (SELECT/INSERT/UPDATE/DELETE)
+    - frauduser    : simula un atacante (SELECT/UPDATE)
+
+================================================================================
+  1. CLONAR EL REPOSITORIO
+================================================================================
+
+  git clone https://github.com/MISW-4202-TravelHub-2026-11-G6.git
+  cd MISW-4202-TravelHub-2026-11-G6
+  git checkout audit
+
+================================================================================
+  2. LEVANTAR LA INFRAESTRUCTURA
+================================================================================
+
+  docker compose down -v
+  docker compose up -d --build
+
+  Esperar ~30 segundos y verificar:
+
+  docker compose ps
+
+  Servicios esperados:
+    - postgres           (healthy)    Puerto 5434
+    - postgres-exporter              Puerto 9187
+    - prometheus                     Puerto 9090
+    - api-reservas       (healthy)    Puerto 5000
+    - auditor                        (corriendo)
+    - api-inventory-1    (healthy)    Puerto 8001
+    - api-inventory-2    (healthy)    Puerto 8002
+    - api-inventory-3    (healthy)    Puerto 8003
+    - nginx                          Puerto 8888
+    - pgadmin                        Puerto 5050
+
+================================================================================
+  3. EJECUTAR EL EXPERIMENTO
+================================================================================
+
+--- LINUX / MAC ---
+
+  bash postgres/run_audit_experiment.sh
+
+--- WINDOWS (PowerShell) ---
+
+  Con Git Bash:
+    & "C:\Program Files\Git\bin\bash.exe" postgres/run_audit_experiment.sh
+
+  Con WSL:
+    wsl bash postgres/run_audit_experiment.sh
+
+--- WINDOWS (CMD) ---
+
+  "C:\Program Files\Git\bin\bash.exe" postgres/run_audit_experiment.sh
+
+================================================================================
+  4. EJECUCION MANUAL (si no se puede correr el script)
+================================================================================
+
+  4a. Verificar servicios:
+
+    curl http://localhost:5000/health
+    curl http://localhost:9090/-/healthy
+    curl http://localhost:9187/metrics
+
+  4b. Crear una reserva via microservicio (canal autorizado):
+
+    curl -X POST http://localhost:5000/bookings ^
+      -H "Content-Type: application/json" ^
+      -d "{\"user_id\": 99, \"sku\": \"HTL-099\", \"item_name\": \"Hotel Test\", \"total_price\": 100000}"
+
+  4c. Verificar audit_log:
+
+    Linux/Mac:
+      PGPASSWORD=adminTravelHub psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT * FROM audit.audit_log;"
+
+    Windows:
+      $env:PGPASSWORD="adminTravelHub"; psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT * FROM audit.audit_log;"
+
+  4d. Simular ataque distribuido (1 UPDATE por reserva):
+
+    Linux/Mac:
+      for i in 1 2 3 4 5; do
+        PGPASSWORD=fraude_pass_456 psql -h localhost -p 5434 -U frauduser -d booking_db \
+          -c "UPDATE booking SET total_price = total_price * 0.01 WHERE id = $i;"
+      done
+
+    Windows:
+      1..5 | ForEach-Object {
+        $env:PGPASSWORD="fraude_pass_456"; psql -h localhost -p 5434 -U frauduser -d booking_db -c "UPDATE booking SET total_price = total_price * 0.01 WHERE id = $_;"
+      }
+
+  4e. Esperar 5-10 segundos y revisar logs:
+
+    docker logs auditor
+
+    Esperado:
+      [FRAUD_DETECTED] Usuario no autorizado detectado: 'frauduser'
+      [CHANGES_REVERTED] 1 cambios de 'frauduser' revertidos
+      [USER_BLOCKED] Usuario 'frauduser' bloqueado
+
+  4f. Verificar bloqueo de frauduser:
+
+    PGPASSWORD=fraude_pass_456 psql -h localhost -p 5434 -U frauduser -d booking_db -c "SELECT 1;"
+
+    Esperado: FATAL: permission denied
+
+  4g. Verificar reversión de precio:
+
+    PGPASSWORD=adminTravelHub psql -h localhost -p 5434 -U admin -d booking_db -c "SELECT total_price FROM booking WHERE id = 1;"
+
+    Esperado: 350000.00
+
+================================================================================
+  5. RESULTADOS ESPERADOS
+================================================================================
+
+  RE1. Detección + alerta en <= 10 segundos
+
+  RE2. Evidencia en audit_log (old_data, new_data, changed_by, timestamps)
+
+  RE3. Bloqueo del usuario en <= 30 segundos (REVOKE CONNECT + ALL PRIVILEGES)
+
+  RE4. Canal autorizado (microservicio) no dispara bloqueo ni alerta
+
+================================================================================
+  6. INTERFACES WEB
+================================================================================
+
+  Prometheus:  http://localhost:9090
+    - Status > Targets: verificar que postgres-audit esta UP
+    - Alerts: alertas de auditoria
+    - Graph: audit_fraud_user_operations_total, audit_total_events_total
+
+  PgAdmin:     http://localhost:5050
+    - Email: admin@admin.com / Password: admin123
+    - Servidor: host=postgres, port=5432, user=admin, pass=adminTravelHub
+
+  API Reservas: http://localhost:5000
+    - GET  /bookings        Listar reservas
+    - POST /bookings        Crear reserva
+    - PUT  /bookings/:id    Actualizar reserva
+    - DELETE /bookings/:id  Eliminar reserva
+
+================================================================================
+  7. LIMPIAR
+================================================================================
+
+  docker compose down -v
+
+================================================================================

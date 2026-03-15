@@ -1,0 +1,80 @@
+audit_operations_total:
+  query: >
+    SELECT
+      operations AS operation,
+      changed_by,
+      COUNT(*) AS total
+    FROM audit.audit_log
+    GROUP BY operations, changed_by
+  metrics:
+    - operation:
+        usage: "LABEL"
+        description: "Type of operation (I, U, D)"
+    - changed_by:
+        usage: "LABEL"
+        description: "Database user who performed the change"
+    - total:
+        usage: "GAUGE"
+        description: "Total audit events by operation and user"
+
+audit_operations_last_5m:
+  query: >
+    SELECT
+      operations AS operation,
+      changed_by,
+      COUNT(*) AS total
+    FROM audit.audit_log
+    WHERE changed_at > NOW() - INTERVAL '5 minutes'
+    GROUP BY operations, changed_by
+  metrics:
+    - operation:
+        usage: "LABEL"
+        description: "Type of operation (I, U, D)"
+    - changed_by:
+        usage: "LABEL"
+        description: "Database user who performed the change"
+    - total:
+        usage: "GAUGE"
+        description: "Audit events in the last 5 minutes by operation and user"
+
+audit_fraud_user_operations:
+  query: >
+    SELECT
+      COUNT(*) AS total
+    FROM audit.audit_log
+    WHERE changed_by = 'frauduser'
+      AND changed_at > NOW() - INTERVAL '5 minutes'
+  metrics:
+    - total:
+        usage: "GAUGE"
+        description: "Operations by frauduser in the last 5 minutes"
+
+audit_latest_event_age_seconds:
+  query: >
+    SELECT
+      COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(changed_at))), -1) AS age_seconds
+    FROM audit.audit_log
+  metrics:
+    - age_seconds:
+        usage: "GAUGE"
+        description: "Seconds since the last audit event (-1 if no events)"
+
+audit_total_events:
+  query: >
+    SELECT COUNT(*) AS total FROM audit.audit_log
+  metrics:
+    - total:
+        usage: "GAUGE"
+        description: "Total number of audit log entries"
+
+audit_updates_last_5m:
+  query: >
+    SELECT
+      COUNT(*) AS total
+    FROM audit.audit_log
+    WHERE operations = 'U'
+      AND changed_at > NOW() - INTERVAL '5 minutes'
+  metrics:
+    - total:
+        usage: "GAUGE"
+        description: "Update operations in the last 5 minutes"

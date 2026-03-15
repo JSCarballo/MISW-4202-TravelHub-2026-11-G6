@@ -1,186 +1,120 @@
-import os
-from contextlib import closing
-from datetime import datetime
-from decimal import Decimal
-
+from flask import Flask, request, jsonify
 import psycopg2
-from flask import Flask, jsonify, request
-from psycopg2.extras import RealDictCursor
+import os
 
 app = Flask(__name__)
 
-ALLOWED_STATUS = {"pending", "confirmed", "cancelled"}
-REQUIRED_FIELDS = {"user_id", "sku", "item_name", "quantity", "total_price"}
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST", "postgres"),
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "database": os.getenv("DB_NAME", "booking_db"),
+    "user": os.getenv("DB_USER", "bookinguser"),
+    "password": os.getenv("DB_PASSWORD", "reservas_pass_123"),
+}
 
 
-def db_settings() -> dict:
-    return {
-        "host": os.getenv("DB_HOST", "postgres"),
-        "port": int(os.getenv("DB_PORT", "5432")),
-        "dbname": os.getenv("DB_NAME", "booking_db"),
-        "user": os.getenv("DB_USER", "bookinguser"),
-        "password": os.getenv("DB_PASSWORD", "reservas_pass_123"),
-        "application_name": os.getenv("DB_APPLICATION_NAME", "reservas-ms"),
-        "connect_timeout": 3,
-    }
+def get_conn():
+    return psycopg2.connect(**DB_CONFIG)
 
 
-def get_connection():
-    return psycopg2.connect(**db_settings())
-
-
-def serialize_booking(row: dict) -> dict:
-    payload = {}
-    for key, value in row.items():
-        if isinstance(value, Decimal):
-            payload[key] = float(value)
-        elif isinstance(value, datetime):
-            payload[key] = value.isoformat()
-        else:
-            payload[key] = value
-    return payload
-
-
-def validate_booking_payload(payload: dict) -> str | None:
-    missing = sorted(REQUIRED_FIELDS - payload.keys())
-    if missing:
-        return f"missing fields: {', '.join(missing)}"
-
-    if not isinstance(payload["user_id"], int):
-        return "user_id must be an integer"
-    if not isinstance(payload["quantity"], int) or payload["quantity"] < 1:
-        return "quantity must be a positive integer"
-    if not isinstance(payload["total_price"], (int, float)):
-        return "total_price must be numeric"
-    if not all(isinstance(payload[field], str) and payload[field].strip() for field in ("sku", "item_name")):
-        return "sku and item_name must be non-empty strings"
-    return None
-
-
-def fetch_booking(booking_id: int) -> dict | None:
-    with closing(get_connection()) as conn, conn, conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(
-            """
-            SELECT id, user_id, sku, item_name, quantity, status, total_price, created_at, updated_at
-            FROM booking
-            WHERE id = %s
-            """,
-            (booking_id,),
-        )
-        row = cursor.fetchone()
-    return serialize_booking(row) if row else None
-
-
-@app.get("/health")
+@app.route("/health", methods=["GET"])
 def health():
-    settings = db_settings()
     try:
-        with closing(get_connection()) as conn, conn.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-    except psycopg2.Error as exc:
-        return (
-            jsonify(
-                {
-                    "service": "reservas",
-                    "healthy": False,
-                    "db_user": settings["user"],
-                    "application_name": settings["application_name"],
-                    "error": str(exc).strip(),
-                }
-            ),
-            503,
-        )
+        conn = get_conn()
+        conn.close()
+        return jsonify({"status": "healthy"}), 200
+    except Exception as e:
+        return jsonify({"status": "unhealthy", "error": str(e)}), 503
 
-    return (
-        jsonify(
-            {
-                "service": "reservas",
-                "healthy": True,
-                "db_user": settings["user"],
-                "application_name": settings["application_name"],
-            }
-        ),
-        200,
+
+@app.route("/bookings", methods=["GET"])
+def list_bookings():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, user_id, sku, item_name, quantity, status, total_price, created_at, updated_at "
+        "FROM booking ORDER BY id"
     )
+    rows = cur.fetchall()
+    cols = [d[0] for d in cur.description]
+    cur.close()
+    conn.close()
+    return jsonify([dict(zip(cols, r)) for r in rows]), 200
 
 
-@app.post("/reservas")
+@app.route("/bookings", methods=["POST"])
 def create_booking():
-    payload = request.get_json(silent=True) or {}
-    error = validate_booking_payload(payload)
-    if error:
-        return jsonify({"error": error}), 400
+    data = request.get_json()
+    required = ["user_id", "sku", "item_name", "total_price"]
+    for field in required:
+        if field not in data:
+            return jsonify({"error": f"Campo requerido: {field}"}), 400
 
-    try:
-        with closing(get_connection()) as conn, conn, conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(
-                """
-                INSERT INTO booking (
-                    user_id,
-                    sku,
-                    item_name,
-                    quantity,
-                    status,
-                    total_price,
-                    updated_at
-                )
-                VALUES (%s, %s, %s, %s, 'pending', %s, NOW())
-                RETURNING id, user_id, sku, item_name, quantity, status, total_price, created_at, updated_at
-                """,
-                (
-                    payload["user_id"],
-                    payload["sku"].strip(),
-                    payload["item_name"].strip(),
-                    payload["quantity"],
-                    payload["total_price"],
-                ),
-            )
-            row = cursor.fetchone()
-    except psycopg2.Error as exc:
-        return jsonify({"error": "database write failed", "detail": str(exc).strip()}), 503
-
-    return jsonify(serialize_booking(row)), 201
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO booking (user_id, sku, item_name, quantity, status, total_price) "
+        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            data["user_id"],
+            data["sku"],
+            data["item_name"],
+            data.get("quantity", 1),
+            data.get("status", "pending"),
+            data["total_price"],
+        ),
+    )
+    booking_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"id": booking_id, "message": "Reserva creada"}), 201
 
 
-@app.get("/reservas/<int:booking_id>")
-def get_booking(booking_id: int):
-    try:
-        booking = fetch_booking(booking_id)
-    except psycopg2.Error as exc:
-        return jsonify({"error": "database read failed", "detail": str(exc).strip()}), 503
+@app.route("/bookings/<int:booking_id>", methods=["PUT"])
+def update_booking(booking_id):
+    data = request.get_json()
+    fields = []
+    values = []
+    for col in ["status", "quantity", "total_price"]:
+        if col in data:
+            fields.append(f"{col} = %s")
+            values.append(data[col])
+    if not fields:
+        return jsonify({"error": "No hay campos para actualizar"}), 400
 
-    if not booking:
-        return jsonify({"error": "booking not found"}), 404
-    return jsonify(booking), 200
+    fields.append("updated_at = NOW()")
+    values.append(booking_id)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE booking SET {', '.join(fields)} WHERE id = %s", values
+    )
+    if cur.rowcount == 0:
+        cur.close()
+        conn.close()
+        return jsonify({"error": "Reserva no encontrada"}), 404
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"message": "Reserva actualizada"}), 200
 
 
-@app.patch("/reservas/<int:booking_id>/status")
-def update_booking_status(booking_id: int):
-    payload = request.get_json(silent=True) or {}
-    status = payload.get("status")
-    if status not in ALLOWED_STATUS:
-        return jsonify({"error": "invalid status", "allowed": sorted(ALLOWED_STATUS)}), 400
-
-    try:
-        with closing(get_connection()) as conn, conn, conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(
-                """
-                UPDATE booking
-                SET status = %s, updated_at = NOW()
-                WHERE id = %s
-                RETURNING id, user_id, sku, item_name, quantity, status, total_price, created_at, updated_at
-                """,
-                (status, booking_id),
-            )
-            row = cursor.fetchone()
-    except psycopg2.Error as exc:
-        return jsonify({"error": "database update failed", "detail": str(exc).strip()}), 503
-
-    if not row:
-        return jsonify({"error": "booking not found"}), 404
-    return jsonify(serialize_booking(row)), 200
+@app.route("/bookings/<int:booking_id>", methods=["DELETE"])
+def delete_booking(booking_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM booking WHERE id = %s", (booking_id,))
+    if cur.rowcount == 0:
+        cur.close()
+        conn.close()
+        return jsonify({"error": "Reserva no encontrada"}), 404
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"message": "Reserva eliminada"}), 200
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=5000)
